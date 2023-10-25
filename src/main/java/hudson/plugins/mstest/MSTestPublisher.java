@@ -22,6 +22,10 @@ import hudson.tasks.Recorder;
 import hudson.tasks.junit.TestResult;
 import hudson.tasks.junit.TestResultAction;
 import hudson.tasks.test.TestResultProjectAction;
+import io.jenkins.plugins.junit.storage.FileJunitTestResultStorage;
+import io.jenkins.plugins.junit.storage.JunitTestResultStorage;
+import io.jenkins.plugins.junit.storage.JunitTestResultStorage.RemotePublisher;
+
 import java.io.File;
 import java.io.IOException;
 import java.io.Serializable;
@@ -184,13 +188,34 @@ public class MSTestPublisher extends Recorder implements Serializable, SimpleBui
             return;
         }
 
-        if (existingAction == null) {
-            action = new TestResultAction(build, result, listener);
-        } else {
-            action = existingAction;
-            action.setResult(result, listener);
+        JunitTestResultStorage storage = JunitTestResultStorage.find();
+
+        // File storage
+        if (!(storage instanceof FileJunitTestResultStorage)) {
+            if (existingAction == null) {
+                action = new TestResultAction(build, result, listener);
+            } else {
+                action = existingAction;
+                action.setResult(result, listener);
+            }
+
+            if (existingAction == null) {
+                build.addAction(action);
+            }
+
+            if (action.getResult().getFailCount() > 0) {
+                build.setResult(Result.UNSTABLE);
+            }
+
+        } 
+        // SQL storage
+        else {
+            RemotePublisher publisher = storage.createRemotePublisher(build);
+            publisher.publish(result, listener);
+            result = new TestResult(storage.load(build.getParent().getFullName(), build.getNumber()));
         }
 
+        // Check if not test
         if (result.getPassCount() == 0 && result.getFailCount() == 0) {
             String message = "None of the test reports contained any result.";
             if (failOnError) {
@@ -200,13 +225,6 @@ public class MSTestPublisher extends Recorder implements Serializable, SimpleBui
             }
         }
 
-        if (existingAction == null) {
-            build.addAction(action);
-        }
-
-        if (action.getResult().getFailCount() > 0) {
-            build.setResult(Result.UNSTABLE);
-        }
     }
 
     /**
